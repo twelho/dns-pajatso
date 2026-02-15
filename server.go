@@ -36,6 +36,13 @@ func writeMsg(w dns.ResponseWriter, m *dns.Msg) {
 	io.Copy(w, m)
 }
 
+// writeSigned TSIG-signs a response using the request MAC, then packs and sends it.
+func (s *Server) writeSigned(w dns.ResponseWriter, m *dns.Msg, requestMAC string) {
+	m.Pseudo = []dns.RR{dns.NewTSIG(s.TsigName, dns.HmacSHA512, 300)}
+	dns.TSIGSign(m, s.tsigSigner, &dns.TSIGOption{RequestMAC: requestMAC})
+	writeMsg(w, m)
+}
+
 // ServeDNS handles DNS queries and RFC 2136 updates.
 func (s *Server) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) {
 	if r.Opcode == dns.OpcodeUpdate {
@@ -116,7 +123,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 	// Validate the zone section.
 	if len(r.Question) != 1 || !dns.EqualName(r.Question[0].Header().Name, s.Zone) {
 		m.Rcode = dns.RcodeRefused
-		writeMsg(w, m)
+		s.writeSigned(w, m, t.MAC)
 		return
 	}
 
@@ -129,7 +136,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 		if !dns.EqualName(name, s.challengeName()) {
 			m.Rcode = dns.RcodeRefused
 			slog.Warn("update refused: wrong name", "name", name, "expected", s.challengeName())
-			writeMsg(w, m)
+			s.writeSigned(w, m, t.MAC)
 			return
 		}
 
@@ -139,13 +146,13 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 			if rrtype != dns.TypeTXT {
 				m.Rcode = dns.RcodeRefused
 				slog.Warn("update refused: wrong record type", "type", dns.TypeToString[rrtype])
-				writeMsg(w, m)
+				s.writeSigned(w, m, t.MAC)
 				return
 			}
 			txt, ok := rr.(*dns.TXT)
 			if !ok || len(txt.Txt) == 0 {
 				m.Rcode = dns.RcodeFormatError
-				writeMsg(w, m)
+				s.writeSigned(w, m, t.MAC)
 				return
 			}
 			s.Store.Set(strings.Join(txt.Txt, ""))
@@ -155,7 +162,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 			// Delete specific RR.
 			if rrtype != dns.TypeTXT {
 				m.Rcode = dns.RcodeRefused
-				writeMsg(w, m)
+				s.writeSigned(w, m, t.MAC)
 				return
 			}
 			s.Store.Delete()
@@ -168,20 +175,20 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 				slog.Info("update: deleted _acme-challenge TXT (class ANY)")
 			} else {
 				m.Rcode = dns.RcodeRefused
-				writeMsg(w, m)
+				s.writeSigned(w, m, t.MAC)
 				return
 			}
 
 		default:
 			m.Rcode = dns.RcodeRefused
-			writeMsg(w, m)
+			s.writeSigned(w, m, t.MAC)
 			return
 		}
 	}
 
 	// Success.
 	m.Rcode = dns.RcodeSuccess
-	writeMsg(w, m)
+	s.writeSigned(w, m, t.MAC)
 }
 
 // hasTSIG returns the TSIG record from the message's Pseudo section, or nil.
