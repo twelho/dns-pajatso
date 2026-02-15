@@ -1,3 +1,4 @@
 zone = example.com.
 tsig_name = acme-update.
+# TIP: Use `make keygen` to generate a new secret
 tsig_secret = <base64-encoded HMAC-SHA512 secret>
