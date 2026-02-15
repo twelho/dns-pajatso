@@ -24,7 +24,6 @@ func main() {
 		zone       string
 		tsigName   string
 		tsigSecret string
-		ns         string
 		listen     string
 	)
 
@@ -35,11 +34,9 @@ func main() {
 			// Normalize FQDNs.
 			zone = ensureFQDN(zone)
 			tsigName = ensureFQDN(tsigName)
-			ns = ensureFQDN(ns)
 
 			srv := &Server{
 				Zone:       zone,
-				NS:         ns,
 				TsigName:   tsigName,
 				TsigSecret: tsigSecret,
 				Store:      &Store{},
@@ -80,13 +77,11 @@ func main() {
 	cmd.Flags().StringVar(&zone, "zone", "", "DNS zone (e.g. example.com.)")
 	cmd.Flags().StringVar(&tsigName, "tsig-name", "", "TSIG key name (e.g. acme-update.)")
 	cmd.Flags().StringVar(&tsigSecret, "tsig-secret", "", "Base64 HMAC-SHA512 secret")
-	cmd.Flags().StringVar(&ns, "ns", "", "NS hostname (e.g. ns1.example.com.)")
 	cmd.Flags().StringVar(&listen, "listen", ":53", "Listen address")
 
 	cmd.MarkFlagRequired("zone")
 	cmd.MarkFlagRequired("tsig-name")
 	cmd.MarkFlagRequired("tsig-secret")
-	cmd.MarkFlagRequired("ns")
 
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)

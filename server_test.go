@@ -15,7 +15,6 @@ import (
 
 const (
 	testZone      = "example.com."
-	testNS        = "ns1.example.com."
 	testTsigName  = "acme-update."
 	testChallenge = "_acme-challenge.example.com."
 )
@@ -33,7 +32,6 @@ func startTestServer(t *testing.T) (string, *Store, func()) {
 	store := &Store{}
 	srv := &Server{
 		Zone:       testZone,
-		NS:         testNS,
 		TsigName:   testTsigName,
 		TsigSecret: testTsigSecret,
 		Store:      store,
@@ -71,42 +69,6 @@ func query(t *testing.T, addr string, name string, qtype uint16) *dns.Msg {
 	return r
 }
 
-func TestQuerySOA(t *testing.T) {
-	addr, _, cleanup := startTestServer(t)
-	defer cleanup()
-
-	r := query(t, addr, testZone, dns.TypeSOA)
-	if r.Rcode != dns.RcodeSuccess {
-		t.Fatalf("expected NOERROR, got %s", dns.RcodeToString[r.Rcode])
-	}
-	if len(r.Answer) != 1 {
-		t.Fatalf("expected 1 answer, got %d", len(r.Answer))
-	}
-	if _, ok := r.Answer[0].(*dns.SOA); !ok {
-		t.Fatalf("expected SOA record, got %T", r.Answer[0])
-	}
-}
-
-func TestQueryNS(t *testing.T) {
-	addr, _, cleanup := startTestServer(t)
-	defer cleanup()
-
-	r := query(t, addr, testZone, dns.TypeNS)
-	if r.Rcode != dns.RcodeSuccess {
-		t.Fatalf("expected NOERROR, got %s", dns.RcodeToString[r.Rcode])
-	}
-	if len(r.Answer) != 1 {
-		t.Fatalf("expected 1 answer, got %d", len(r.Answer))
-	}
-	ns, ok := r.Answer[0].(*dns.NS)
-	if !ok {
-		t.Fatalf("expected NS record, got %T", r.Answer[0])
-	}
-	if ns.Ns != testNS {
-		t.Fatalf("expected NS %q, got %q", testNS, ns.Ns)
-	}
-}
-
 func TestQueryChallengeTXTEmpty(t *testing.T) {
 	addr, _, cleanup := startTestServer(t)
 	defer cleanup()
@@ -117,10 +79,6 @@ func TestQueryChallengeTXTEmpty(t *testing.T) {
 	}
 	if len(r.Answer) != 0 {
 		t.Fatalf("expected 0 answers, got %d", len(r.Answer))
-	}
-	// Should have SOA in authority (NODATA).
-	if len(r.Ns) != 1 {
-		t.Fatalf("expected 1 authority record, got %d", len(r.Ns))
 	}
 }
 
@@ -146,23 +104,16 @@ func TestQueryChallengeTXTSet(t *testing.T) {
 	}
 }
 
-func TestQueryNXDOMAIN(t *testing.T) {
-	addr, _, cleanup := startTestServer(t)
-	defer cleanup()
-
-	r := query(t, addr, "nonexistent.example.com.", dns.TypeA)
-	if r.Rcode != dns.RcodeNameError {
-		t.Fatalf("expected NXDOMAIN, got %s", dns.RcodeToString[r.Rcode])
-	}
-}
-
-func TestQueryRefusedOutOfZone(t *testing.T) {
+func TestQueryUnknownName(t *testing.T) {
 	addr, _, cleanup := startTestServer(t)
 	defer cleanup()
 
 	r := query(t, addr, "other.com.", dns.TypeA)
-	if r.Rcode != dns.RcodeRefused {
-		t.Fatalf("expected REFUSED, got %s", dns.RcodeToString[r.Rcode])
+	if r.Rcode != dns.RcodeSuccess {
+		t.Fatalf("expected NOERROR, got %s", dns.RcodeToString[r.Rcode])
+	}
+	if len(r.Answer) != 0 {
+		t.Fatalf("expected 0 answers, got %d", len(r.Answer))
 	}
 }
 
@@ -305,37 +256,6 @@ func TestUpdateWrongType(t *testing.T) {
 
 	if r.Rcode != dns.RcodeRefused {
 		t.Fatalf("expected REFUSED, got %s", dns.RcodeToString[r.Rcode])
-	}
-}
-
-func TestQueryApexANY(t *testing.T) {
-	addr, _, cleanup := startTestServer(t)
-	defer cleanup()
-
-	r := query(t, addr, testZone, dns.TypeANY)
-	if r.Rcode != dns.RcodeSuccess {
-		t.Fatalf("expected NOERROR, got %s", dns.RcodeToString[r.Rcode])
-	}
-	// Should have both SOA and NS.
-	if len(r.Answer) != 2 {
-		t.Fatalf("expected 2 answers, got %d", len(r.Answer))
-	}
-}
-
-func TestQueryApexNonexistentType(t *testing.T) {
-	addr, _, cleanup := startTestServer(t)
-	defer cleanup()
-
-	r := query(t, addr, testZone, dns.TypeMX)
-	if r.Rcode != dns.RcodeSuccess {
-		t.Fatalf("expected NOERROR (NODATA), got %s", dns.RcodeToString[r.Rcode])
-	}
-	// NODATA: no answers, SOA in authority.
-	if len(r.Answer) != 0 {
-		t.Fatalf("expected 0 answers, got %d", len(r.Answer))
-	}
-	if len(r.Ns) != 1 {
-		t.Fatalf("expected 1 authority record, got %d", len(r.Ns))
 	}
 }
 
