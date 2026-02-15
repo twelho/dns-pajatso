@@ -1,6 +1,6 @@
 # dns-pajatso
 
-`dns-pajatso` is a workaround enabling ACME DNS-01 challenges to be issued from network connections with incoming port 53 firewalled. Essentially, this is a simple external DNS server that can host the `_acme-challenge` TXT record and permit updates to it through RFC 2136. To be hostable externally, the server is packaged as a [gokrazy appliance](https://gokrazy.org/), which is baked into an x86_64 VM disk image to be runnable on a cloud provider. It is stateless and needs minimal resources, intended to be run on the free tiers offered by cloud providers.
+`dns-pajatso` is a helper enabling ACME DNS-01 challenges to be issued for broadband connections with port 53 blocked for incoming traffic. Essentially, this is a simple external DNS server that can host the `_acme-challenge` TXT record and permit updates to it through RFC 2136. To be hostable externally, the server is packaged as a [gokrazy appliance](https://gokrazy.org/), which is baked into an x86_64 VM disk image to be runnable on a cloud provider. It is stateless and needs minimal resources, intended to be run on the free tiers offered by public cloud providers.
 
 ## Details
 
@@ -107,3 +107,11 @@ The record automatically expires after 10 minutes. Only `_acme-challenge` TXT re
 | `integration-test` | Run integration tests against running VM |
 | `keygen` | Generate a random TSIG secret |
 | `clean` | Remove build artifacts |
+
+## Author
+
+- Dennis Marttinen ([@twelho](https://github.com/twelho))
+
+## License
+
+[MIT](https://spdx.org/licenses/MIT.html) ([LICENSE](LICENSE))
