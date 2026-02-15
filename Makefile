@@ -101,7 +101,7 @@ integration-test: .check-config
 
 .PHONY: keygen
 keygen:
-	@dd if=/dev/urandom bs=64 count=1 2>/dev/null | base64 -w0
+	dd if=/dev/urandom bs=64 count=1 2>/dev/null | base64 -w0
 	@echo
 
 .PHONY: clean
