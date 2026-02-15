@@ -1,7 +1,15 @@
 -include config.mk
 
-.PHONY: all
-all: image
+TZ ?= $(shell realpath /etc/localtime | sed 's|.*/zoneinfo/||')
+
+.PHONY: shell
+shell:
+	docker build --build-arg TZ="$(TZ)" -t dns-pajatso .
+	docker run -it --rm --name dns-pajatso -v .:/work:z -w /work --device /dev/kvm dns-pajatso
+
+.PHONY: exec
+exec:
+	docker exec -it dns-pajatso bash -l
 
 GO_SRC = $(filter-out %_test.go,$(wildcard *.go)) go.mod go.sum
 
@@ -45,11 +53,14 @@ define GOKRAZY_CONFIG
 endef
 export GOKRAZY_CONFIG
 
-.PHONY: .gokrazy-config
-.gokrazy-config: $(GOK)
+.PHONY: .check-config
+.check-config:
 	@test -n "$(zone)" || (echo "error: zone not set in config.mk" && exit 1)
 	@test -n "$(tsig_name)" || (echo "error: tsig_name not set in config.mk" && exit 1)
 	@test -n "$(tsig_secret)" || (echo "error: tsig_secret not set in config.mk" && exit 1)
+
+.PHONY: .gokrazy-config
+.gokrazy-config: $(GOK) .check-config
 	mkdir -p $(GOKRAZY_PARENT_DIR)/automaatti
 	printf '%s' "$$GOKRAZY_CONFIG" > $(GOKRAZY_PARENT_DIR)/automaatti/config.json
 	$(GOK) -i automaatti add $(CURDIR)
@@ -64,6 +75,25 @@ image: .gokrazy-config
 .PHONY: run
 run: .gokrazy-config
 	$(GOK) -i automaatti vm run --graphic=false --netdev 'user,id=net0,hostfwd=udp::53-:53'
+
+.PHONY: integration-test
+integration-test: .check-config
+	@echo "==> nsupdate: add TXT record"
+	printf 'server 127.0.0.1\nzone $(zone)\nupdate add _acme-challenge.$(zone) 60 TXT "test-token"\nsend\n' | \
+		nsupdate -y 'hmac-sha512:$(tsig_name):$(tsig_secret)'
+	@echo "==> dig: verify TXT record"
+	dig @127.0.0.1 _acme-challenge.$(zone) TXT +short | tee /dev/stderr | grep -q '"test-token"'
+	@echo "==> nsupdate: delete TXT record"
+	printf 'server 127.0.0.1\nzone $(zone)\nupdate delete _acme-challenge.$(zone) TXT\nsend\n' | \
+		nsupdate -y 'hmac-sha512:$(tsig_name):$(tsig_secret)'
+	@echo "==> dig: verify deletion"
+	@test -z "$$(dig @127.0.0.1 _acme-challenge.$(zone) TXT +short)"
+	@echo "==> all integration tests passed"
+
+.PHONY: keygen
+keygen:
+	@dd if=/dev/urandom bs=64 count=1 2>/dev/null | base64 -w0
+	@echo
 
 .PHONY: clean
 clean:
