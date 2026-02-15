@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -21,6 +22,12 @@ func ensureFQDN(s string) string {
 }
 
 func main() {
+	// Log to /dev/kmsg so messages appear in dmesg.
+	if kmsg, err := os.OpenFile("/dev/kmsg", os.O_WRONLY, 0); err == nil {
+		log.SetOutput(kmsg)
+		log.SetPrefix("[dns-pajatso] ")
+	}
+
 	var (
 		zone       string
 		tsigName   string

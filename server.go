@@ -80,6 +80,7 @@ func (s *Server) handleQuery(w dns.ResponseWriter, r *dns.Msg) {
 					Txt: []string{val},
 				},
 			})
+			slog.Info("query: served _acme-challenge TXT")
 		}
 	}
 

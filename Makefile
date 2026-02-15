@@ -27,12 +27,17 @@ export GOKRAZY_PARENT_DIR
 $(GOK):
 	GOBIN=$(CURDIR)/bin go install github.com/gokrazy/tools/cmd/gok@latest
 
+# NoPassword restricts the built-in gokrazy HTTP interface to localhost only. Reference:
+# https://github.com/gokrazy/internal/blob/00a332bd5e47122e58c6fbd8b86082ad3572f6cc/config/config.go#L53-L63
 define GOKRAZY_CONFIG
 {
   "Hostname": "kasino",
+  "Update": {
+    "NoPassword": true
+  },
   "KernelPackage": "github.com/rtr7/kernel",
   "FirmwarePackage": "github.com/rtr7/kernel",
-  "SerialConsole": "ttyS0,115200",
+  "SerialConsole": "ttyS0",
   "Packages": [
     "github.com/twelho/dns-pajatso"
   ],
@@ -45,6 +50,10 @@ define GOKRAZY_CONFIG
       ]
     }
   },
+  "GokrazyPackages": [
+    "github.com/gokrazy/gokrazy/cmd/dhcp",
+    "github.com/gokrazy/gokrazy/cmd/ntp"
+  ],
   "Environment": [
     "GOOS=linux",
     "GOARCH=amd64"
