@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"codeberg.org/miekg/dns"
@@ -127,7 +128,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 
 		if !dns.EqualName(name, s.challengeName()) {
 			m.Rcode = dns.RcodeRefused
-			fmt.Printf("update refused: name %q is not %q\n", name, s.challengeName())
+			slog.Warn("update refused: wrong name", "name", name, "expected", s.challengeName())
 			writeMsg(w, m)
 			return
 		}
@@ -137,7 +138,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 			// Add record.
 			if rrtype != dns.TypeTXT {
 				m.Rcode = dns.RcodeRefused
-				fmt.Printf("update refused: can only add TXT records, got %s\n", dns.TypeToString[rrtype])
+				slog.Warn("update refused: wrong record type", "type", dns.TypeToString[rrtype])
 				writeMsg(w, m)
 				return
 			}
@@ -148,7 +149,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 				return
 			}
 			s.Store.Set(strings.Join(txt.Txt, ""))
-			fmt.Printf("update: set _acme-challenge TXT\n")
+			slog.Info("update: set _acme-challenge TXT")
 
 		case dns.ClassNONE:
 			// Delete specific RR.
@@ -158,13 +159,13 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 				return
 			}
 			s.Store.Delete()
-			fmt.Printf("update: deleted _acme-challenge TXT\n")
+			slog.Info("update: deleted _acme-challenge TXT")
 
 		case dns.ClassANY:
 			// Delete all RRs of given type or name.
 			if rrtype == dns.TypeANY || rrtype == dns.TypeTXT {
 				s.Store.Delete()
-				fmt.Printf("update: deleted _acme-challenge TXT (class ANY)\n")
+				slog.Info("update: deleted _acme-challenge TXT (class ANY)")
 			} else {
 				m.Rcode = dns.RcodeRefused
 				writeMsg(w, m)

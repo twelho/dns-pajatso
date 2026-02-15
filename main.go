@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -60,13 +61,13 @@ func main() {
 			go func() { errCh <- udpServer.ListenAndServe() }()
 			go func() { errCh <- tcpServer.ListenAndServe() }()
 
-			fmt.Printf("dns-pajatso serving zone %s on %s (UDP+TCP)\n", zone, listen)
+			slog.Info("server started", "zone", zone, "listen", listen)
 
 			select {
 			case err := <-errCh:
 				return fmt.Errorf("server error: %w", err)
 			case <-ctx.Done():
-				fmt.Println("\nshutting down...")
+				slog.Info("shutting down")
 				udpServer.Shutdown(context.Background())
 				tcpServer.Shutdown(context.Background())
 				return nil
