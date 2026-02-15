@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/base64"
@@ -8,17 +9,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miekg/dns"
+	"codeberg.org/miekg/dns"
+	"codeberg.org/miekg/dns/rdata"
 )
 
 const (
-	testZone       = "example.com."
-	testNS         = "ns1.example.com."
-	testTsigName   = "acme-update."
-	testChallenge  = "_acme-challenge.example.com."
+	testZone      = "example.com."
+	testNS        = "ns1.example.com."
+	testTsigName  = "acme-update."
+	testChallenge = "_acme-challenge.example.com."
 )
 
-// testTsigSecret is a deterministic test key.
+// testTsigSecret is a deterministic test key (base64-encoded).
 var testTsigSecret = base64.StdEncoding.EncodeToString(
 	hmac.New(sha512.New, []byte("test-key")).Sum(nil),
 )
@@ -47,24 +49,22 @@ func startTestServer(t *testing.T) (string, *Store, func()) {
 	dnsServer := srv.NewDNSServer()
 	dnsServer.PacketConn = pc
 
-	go dnsServer.ActivateAndServe()
+	go dnsServer.ListenAndServe()
 
 	// Wait for the server to be ready.
 	time.Sleep(50 * time.Millisecond)
 
 	return addr, store, func() {
-		dnsServer.Shutdown()
+		dnsServer.Shutdown(context.Background())
 	}
 }
 
 func query(t *testing.T, addr string, name string, qtype uint16) *dns.Msg {
 	t.Helper()
-	c := new(dns.Client)
-	c.Net = "udp"
-	m := new(dns.Msg)
-	m.SetQuestion(name, qtype)
+	c := dns.NewClient()
+	m := dns.NewMsg(name, qtype)
 
-	r, _, err := c.Exchange(m, addr)
+	r, _, err := c.Exchange(context.Background(), m, "udp", addr)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -166,23 +166,36 @@ func TestQueryRefusedOutOfZone(t *testing.T) {
 	}
 }
 
-func sendUpdate(t *testing.T, addr string, zone string, rrs []dns.RR, tsigName, tsigSecret string) *dns.Msg {
+func makeUpdateMsg(t *testing.T, zone string, rrs []dns.RR, tsigName, tsigSecret string) *dns.Msg {
 	t.Helper()
 	m := new(dns.Msg)
-	m.SetUpdate(zone)
+	m.ID = dns.ID()
+	m.Opcode = dns.OpcodeUpdate
+	// Zone section: SOA RR with just the zone name.
+	m.Question = []dns.RR{&dns.SOA{Hdr: dns.Header{Name: zone, Class: dns.ClassINET}}}
 	m.Ns = rrs
 
 	if tsigName != "" {
-		m.SetTsig(tsigName, dns.HmacSHA512, 300, time.Now().Unix())
+		m.Pseudo = []dns.RR{dns.NewTSIG(tsigName, dns.HmacSHA512, 300)}
 	}
 
-	c := new(dns.Client)
-	c.Net = "udp"
+	return m
+}
+
+func sendUpdate(t *testing.T, addr string, zone string, rrs []dns.RR, tsigName, tsigSecret string) *dns.Msg {
+	t.Helper()
+	m := makeUpdateMsg(t, zone, rrs, tsigName, tsigSecret)
+
 	if tsigName != "" {
-		c.TsigSecret = map[string]string{tsigName: tsigSecret}
+		secret, _ := base64.StdEncoding.DecodeString(tsigSecret)
+		signer := dns.HmacTSIG{Secret: secret}
+		if err := dns.TSIGSign(m, signer, &dns.TSIGOption{}); err != nil {
+			t.Fatalf("TSIG sign failed: %v", err)
+		}
 	}
 
-	r, _, err := c.Exchange(m, addr)
+	c := dns.NewClient()
+	r, _, err := c.Exchange(context.Background(), m, "udp", addr)
 	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
@@ -193,7 +206,7 @@ func TestUpdateAddTXT(t *testing.T) {
 	addr, store, cleanup := startTestServer(t)
 	defer cleanup()
 
-	rr, _ := dns.NewRR(testChallenge + " 60 IN TXT \"my-token\"")
+	rr, _ := dns.New(testChallenge + " 60 IN TXT \"my-token\"")
 	r := sendUpdate(t, addr, testZone, []dns.RR{rr}, testTsigName, testTsigSecret)
 
 	if r.Rcode != dns.RcodeSuccess {
@@ -214,13 +227,13 @@ func TestUpdateDeleteTXT(t *testing.T) {
 
 	// Delete specific RR: class NONE.
 	rr := &dns.TXT{
-		Hdr: dns.RR_Header{
-			Name:   testChallenge,
-			Rrtype: dns.TypeTXT,
-			Class:  dns.ClassNONE,
-			Ttl:    0,
+		Hdr: dns.Header{
+			Name:  testChallenge,
+			Class: dns.ClassNONE,
 		},
-		Txt: []string{"to-delete"},
+		TXT: rdata.TXT{
+			Txt: []string{"to-delete"},
+		},
 	}
 	r := sendUpdate(t, addr, testZone, []dns.RR{rr}, testTsigName, testTsigSecret)
 
@@ -242,11 +255,9 @@ func TestUpdateDeleteAny(t *testing.T) {
 
 	// Delete all RRsets: class ANY, type ANY.
 	rr := &dns.ANY{
-		Hdr: dns.RR_Header{
-			Name:   testChallenge,
-			Rrtype: dns.TypeANY,
-			Class:  dns.ClassANY,
-			Ttl:    0,
+		Hdr: dns.Header{
+			Name:  testChallenge,
+			Class: dns.ClassANY,
 		},
 	}
 	r := sendUpdate(t, addr, testZone, []dns.RR{rr}, testTsigName, testTsigSecret)
@@ -265,7 +276,7 @@ func TestUpdateNoTSIG(t *testing.T) {
 	addr, _, cleanup := startTestServer(t)
 	defer cleanup()
 
-	rr, _ := dns.NewRR(testChallenge + " 60 IN TXT \"no-auth\"")
+	rr, _ := dns.New(testChallenge + " 60 IN TXT \"no-auth\"")
 	r := sendUpdate(t, addr, testZone, []dns.RR{rr}, "", "")
 
 	if r.Rcode != dns.RcodeRefused {
@@ -277,7 +288,7 @@ func TestUpdateWrongName(t *testing.T) {
 	addr, _, cleanup := startTestServer(t)
 	defer cleanup()
 
-	rr, _ := dns.NewRR("wrong.example.com. 60 IN TXT \"bad\"")
+	rr, _ := dns.New("wrong.example.com. 60 IN TXT \"bad\"")
 	r := sendUpdate(t, addr, testZone, []dns.RR{rr}, testTsigName, testTsigSecret)
 
 	if r.Rcode != dns.RcodeRefused {
@@ -289,7 +300,7 @@ func TestUpdateWrongType(t *testing.T) {
 	addr, _, cleanup := startTestServer(t)
 	defer cleanup()
 
-	rr, _ := dns.NewRR(testChallenge + " 60 IN A 1.2.3.4")
+	rr, _ := dns.New(testChallenge + " 60 IN A 1.2.3.4")
 	r := sendUpdate(t, addr, testZone, []dns.RR{rr}, testTsigName, testTsigSecret)
 
 	if r.Rcode != dns.RcodeRefused {
@@ -334,7 +345,7 @@ func TestFullUpdateQueryCycle(t *testing.T) {
 	defer cleanup()
 
 	// 1. Add a TXT record via update.
-	rr, _ := dns.NewRR(testChallenge + " 60 IN TXT \"cycle-token\"")
+	rr, _ := dns.New(testChallenge + " 60 IN TXT \"cycle-token\"")
 	r := sendUpdate(t, addr, testZone, []dns.RR{rr}, testTsigName, testTsigSecret)
 	if r.Rcode != dns.RcodeSuccess {
 		t.Fatalf("add: expected NOERROR, got %s", dns.RcodeToString[r.Rcode])
@@ -355,13 +366,13 @@ func TestFullUpdateQueryCycle(t *testing.T) {
 
 	// 3. Delete the TXT record.
 	delRR := &dns.TXT{
-		Hdr: dns.RR_Header{
-			Name:   testChallenge,
-			Rrtype: dns.TypeTXT,
-			Class:  dns.ClassNONE,
-			Ttl:    0,
+		Hdr: dns.Header{
+			Name:  testChallenge,
+			Class: dns.ClassNONE,
 		},
-		Txt: []string{"cycle-token"},
+		TXT: rdata.TXT{
+			Txt: []string{"cycle-token"},
+		},
 	}
 	r = sendUpdate(t, addr, testZone, []dns.RR{delRR}, testTsigName, testTsigSecret)
 	if r.Rcode != dns.RcodeSuccess {

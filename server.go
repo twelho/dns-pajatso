@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"strings"
 
-	"github.com/miekg/dns"
+	"codeberg.org/miekg/dns"
+	"codeberg.org/miekg/dns/dnsutil"
+	"codeberg.org/miekg/dns/rdata"
 )
 
 // Server is a DNS server that serves _acme-challenge TXT records
@@ -16,6 +21,8 @@ type Server struct {
 	TsigSecret string // Base64-encoded HMAC-SHA512 secret
 
 	Store *Store
+
+	tsigSigner dns.HmacTSIG // initialized in NewDNSServer
 }
 
 // challengeName returns the FQDN for the _acme-challenge record.
@@ -26,37 +33,45 @@ func (s *Server) challengeName() string {
 // soaRecord returns a synthesized SOA record for the zone apex.
 func (s *Server) soaRecord() *dns.SOA {
 	return &dns.SOA{
-		Hdr: dns.RR_Header{
-			Name:   s.Zone,
-			Rrtype: dns.TypeSOA,
-			Class:  dns.ClassINET,
-			Ttl:    300,
+		Hdr: dns.Header{
+			Name:  s.Zone,
+			Class: dns.ClassINET,
+			TTL:   300,
 		},
-		Ns:      s.NS,
-		Mbox:    "hostmaster." + s.Zone,
-		Serial:  1,
-		Refresh: 3600,
-		Retry:   600,
-		Expire:  86400,
-		Minttl:  300,
+		SOA: rdata.SOA{
+			Ns:      s.NS,
+			Mbox:    "hostmaster." + s.Zone,
+			Serial:  1,
+			Refresh: 3600,
+			Retry:   600,
+			Expire:  86400,
+			Minttl:  300,
+		},
 	}
 }
 
 // nsRecord returns a synthesized NS record for the zone apex.
 func (s *Server) nsRecord() *dns.NS {
 	return &dns.NS{
-		Hdr: dns.RR_Header{
-			Name:   s.Zone,
-			Rrtype: dns.TypeNS,
-			Class:  dns.ClassINET,
-			Ttl:    300,
+		Hdr: dns.Header{
+			Name:  s.Zone,
+			Class: dns.ClassINET,
+			TTL:   300,
 		},
-		Ns: s.NS,
+		NS: rdata.NS{
+			Ns: s.NS,
+		},
 	}
 }
 
+// writeMsg packs and sends a DNS message to w.
+func writeMsg(w dns.ResponseWriter, m *dns.Msg) {
+	m.Pack()
+	io.Copy(w, m)
+}
+
 // ServeDNS handles DNS queries and RFC 2136 updates.
-func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
+func (s *Server) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) {
 	if r.Opcode == dns.OpcodeUpdate {
 		s.handleUpdate(w, r)
 		return
@@ -68,32 +83,33 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 // handleQuery serves authoritative responses for the zone.
 func (s *Server) handleQuery(w dns.ResponseWriter, r *dns.Msg) {
 	m := new(dns.Msg)
-	m.SetReply(r)
+	dnsutil.SetReply(m, r)
 	m.Authoritative = true
 
 	if len(r.Question) == 0 {
 		m.Rcode = dns.RcodeFormatError
-		w.WriteMsg(m)
+		writeMsg(w, m)
 		return
 	}
 
 	q := r.Question[0]
-	qname := strings.ToLower(q.Name)
+	qname := strings.ToLower(q.Header().Name)
+	qtype := dns.RRToType(q)
 
 	// Only answer for names within our zone.
-	if !dns.IsSubDomain(s.Zone, qname) {
+	if !dnsutil.IsBelow(s.Zone, qname) {
 		m.Rcode = dns.RcodeRefused
-		w.WriteMsg(m)
+		writeMsg(w, m)
 		return
 	}
 
 	switch {
-	case qname == strings.ToLower(s.Zone):
+	case dns.EqualName(qname, s.Zone):
 		// Zone apex.
-		switch q.Qtype {
+		switch qtype {
 		case dns.TypeSOA, dns.TypeANY:
 			m.Answer = append(m.Answer, s.soaRecord())
-			if q.Qtype == dns.TypeANY {
+			if qtype == dns.TypeANY {
 				m.Answer = append(m.Answer, s.nsRecord())
 			}
 		case dns.TypeNS:
@@ -103,18 +119,19 @@ func (s *Server) handleQuery(w dns.ResponseWriter, r *dns.Msg) {
 			m.Ns = append(m.Ns, s.soaRecord())
 		}
 
-	case qname == strings.ToLower(s.challengeName()):
+	case dns.EqualName(qname, s.challengeName()):
 		// _acme-challenge record.
-		if q.Qtype == dns.TypeTXT || q.Qtype == dns.TypeANY {
+		if qtype == dns.TypeTXT || qtype == dns.TypeANY {
 			if val, ok := s.Store.Get(); ok {
 				m.Answer = append(m.Answer, &dns.TXT{
-					Hdr: dns.RR_Header{
-						Name:   s.challengeName(),
-						Rrtype: dns.TypeTXT,
-						Class:  dns.ClassINET,
-						Ttl:    60,
+					Hdr: dns.Header{
+						Name:  s.challengeName(),
+						Class: dns.ClassINET,
+						TTL:   60,
 					},
-					Txt: []string{val},
+					TXT: rdata.TXT{
+						Txt: []string{val},
+					},
 				})
 			}
 		}
@@ -129,61 +146,74 @@ func (s *Server) handleQuery(w dns.ResponseWriter, r *dns.Msg) {
 		m.Ns = append(m.Ns, s.soaRecord())
 	}
 
-	w.WriteMsg(m)
+	writeMsg(w, m)
 }
 
 // handleUpdate processes RFC 2136 dynamic update requests.
 func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 	m := new(dns.Msg)
-	m.SetReply(r)
+	dnsutil.SetReply(m, r)
 
-	// Verify TSIG authentication.
-	if r.IsTsig() == nil {
-		m.Rcode = dns.RcodeRefused
-		w.WriteMsg(m)
+	// The server framework only unpacks header+question. Fully unpack the rest.
+	if err := r.Unpack(); err != nil {
+		m.Rcode = dns.RcodeFormatError
+		writeMsg(w, m)
 		return
 	}
-	// The miekg/dns server framework validates the TSIG MAC via the
-	// TsigSecret map before calling the handler. If validation failed,
-	// the TsigStatus will be set to a non-nil error.
-	if w.TsigStatus() != nil {
+
+	// Verify TSIG authentication.
+	t := hasTSIG(r)
+	if t == nil {
+		m.Rcode = dns.RcodeRefused
+		writeMsg(w, m)
+		return
+	}
+	// Verify the TSIG key name matches.
+	if !dns.EqualName(t.Hdr.Name, s.TsigName) {
 		m.Rcode = dns.RcodeNotAuth
-		w.WriteMsg(m)
+		writeMsg(w, m)
+		return
+	}
+	// Verify the TSIG MAC.
+	if err := dns.TSIGVerify(r, s.tsigSigner, &dns.TSIGOption{}); err != nil {
+		m.Rcode = dns.RcodeNotAuth
+		writeMsg(w, m)
 		return
 	}
 
 	// Validate the zone section.
-	if len(r.Question) != 1 || strings.ToLower(r.Question[0].Name) != strings.ToLower(s.Zone) {
+	if len(r.Question) != 1 || !dns.EqualName(r.Question[0].Header().Name, s.Zone) {
 		m.Rcode = dns.RcodeRefused
-		w.WriteMsg(m)
+		writeMsg(w, m)
 		return
 	}
 
 	// Process the update section.
 	for _, rr := range r.Ns {
 		hdr := rr.Header()
-		name := strings.ToLower(hdr.Name)
+		name := hdr.Name
+		rrtype := dns.RRToType(rr)
 
-		if name != strings.ToLower(s.challengeName()) {
+		if !dns.EqualName(name, s.challengeName()) {
 			m.Rcode = dns.RcodeRefused
 			fmt.Printf("update refused: name %q is not %q\n", name, s.challengeName())
-			w.WriteMsg(m)
+			writeMsg(w, m)
 			return
 		}
 
 		switch hdr.Class {
 		case dns.ClassINET:
 			// Add record.
-			if hdr.Rrtype != dns.TypeTXT {
+			if rrtype != dns.TypeTXT {
 				m.Rcode = dns.RcodeRefused
-				fmt.Printf("update refused: can only add TXT records, got %s\n", dns.TypeToString[hdr.Rrtype])
-				w.WriteMsg(m)
+				fmt.Printf("update refused: can only add TXT records, got %s\n", dns.TypeToString[rrtype])
+				writeMsg(w, m)
 				return
 			}
 			txt, ok := rr.(*dns.TXT)
 			if !ok || len(txt.Txt) == 0 {
 				m.Rcode = dns.RcodeFormatError
-				w.WriteMsg(m)
+				writeMsg(w, m)
 				return
 			}
 			s.Store.Set(strings.Join(txt.Txt, ""))
@@ -191,9 +221,9 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 
 		case dns.ClassNONE:
 			// Delete specific RR.
-			if hdr.Rrtype != dns.TypeTXT {
+			if rrtype != dns.TypeTXT {
 				m.Rcode = dns.RcodeRefused
-				w.WriteMsg(m)
+				writeMsg(w, m)
 				return
 			}
 			s.Store.Delete()
@@ -201,67 +231,50 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 
 		case dns.ClassANY:
 			// Delete all RRs of given type or name.
-			if hdr.Rrtype == dns.TypeANY || hdr.Rrtype == dns.TypeTXT {
+			if rrtype == dns.TypeANY || rrtype == dns.TypeTXT {
 				s.Store.Delete()
 				fmt.Printf("update: deleted _acme-challenge TXT (class ANY)\n")
 			} else {
 				m.Rcode = dns.RcodeRefused
-				w.WriteMsg(m)
+				writeMsg(w, m)
 				return
 			}
 
 		default:
 			m.Rcode = dns.RcodeRefused
-			w.WriteMsg(m)
+			writeMsg(w, m)
 			return
 		}
 	}
 
 	// Success.
 	m.Rcode = dns.RcodeSuccess
-	w.WriteMsg(m)
+	writeMsg(w, m)
+}
+
+// hasTSIG returns the TSIG record from the message's Pseudo section, or nil.
+func hasTSIG(m *dns.Msg) *dns.TSIG {
+	for _, rr := range m.Pseudo {
+		if t, ok := rr.(*dns.TSIG); ok {
+			return t
+		}
+	}
+	return nil
 }
 
 // NewDNSServer returns a configured dns.Server (caller must set Addr and Net).
 func (s *Server) NewDNSServer() *dns.Server {
+	// Decode the base64 TSIG secret.
+	secret, err := base64.StdEncoding.DecodeString(s.TsigSecret)
+	if err != nil {
+		panic(fmt.Sprintf("invalid TSIG secret: %v", err))
+	}
+	s.tsigSigner = dns.HmacTSIG{Secret: secret}
+
 	mux := dns.NewServeMux()
 	mux.Handle(".", s)
 
 	return &dns.Server{
-		Handler:       mux,
-		TsigSecret:    map[string]string{s.TsigName: s.TsigSecret},
-		MsgAcceptFunc: msgAcceptWithUpdate,
+		Handler: mux,
 	}
-}
-
-// msgAcceptWithUpdate is a dns.MsgAcceptFunc that extends the default
-// behavior to also accept OpcodeUpdate messages (RFC 2136).
-func msgAcceptWithUpdate(dh dns.Header) dns.MsgAcceptAction {
-	if isResponse := dh.Bits&(1<<15) != 0; isResponse {
-		return dns.MsgIgnore
-	}
-
-	opcode := int(dh.Bits>>11) & 0xF
-	if opcode != dns.OpcodeQuery && opcode != dns.OpcodeNotify && opcode != dns.OpcodeUpdate {
-		return dns.MsgRejectNotImplemented
-	}
-
-	if dh.Qdcount != 1 {
-		return dns.MsgReject
-	}
-
-	// Updates can have many RRs in all sections; skip section count checks for them.
-	if opcode != dns.OpcodeUpdate {
-		if dh.Ancount > 1 {
-			return dns.MsgReject
-		}
-		if dh.Nscount > 1 {
-			return dns.MsgReject
-		}
-		if dh.Arcount > 2 {
-			return dns.MsgReject
-		}
-	}
-
-	return dns.MsgAccept
 }

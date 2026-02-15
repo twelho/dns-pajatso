@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -69,8 +70,8 @@ func main() {
 				return fmt.Errorf("server error: %w", err)
 			case <-ctx.Done():
 				fmt.Println("\nshutting down...")
-				udpServer.Shutdown()
-				tcpServer.Shutdown()
+				udpServer.Shutdown(context.Background())
+				tcpServer.Shutdown(context.Background())
 				return nil
 			}
 		},
