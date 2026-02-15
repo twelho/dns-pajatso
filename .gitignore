@@ -1,3 +1,5 @@
 config.mk
 dns-pajatso
+bin/
+gokrazy/
 *.qcow2
