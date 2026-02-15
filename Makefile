@@ -29,7 +29,7 @@ $(GOK):
 
 define GOKRAZY_CONFIG
 {
-  "Hostname": "automaatti",
+  "Hostname": "kasino",
   "KernelPackage": "github.com/rtr7/kernel",
   "FirmwarePackage": "github.com/rtr7/kernel",
   "SerialConsole": "ttyS0,115200",
@@ -61,20 +61,20 @@ export GOKRAZY_CONFIG
 
 .PHONY: .gokrazy-config
 .gokrazy-config: $(GOK) .check-config
-	mkdir -p $(GOKRAZY_PARENT_DIR)/automaatti
-	printf '%s' "$$GOKRAZY_CONFIG" > $(GOKRAZY_PARENT_DIR)/automaatti/config.json
-	$(GOK) -i automaatti add $(CURDIR)
+	mkdir -p $(GOKRAZY_PARENT_DIR)/kasino
+	printf '%s' "$$GOKRAZY_CONFIG" > $(GOKRAZY_PARENT_DIR)/kasino/config.json
+	$(GOK) -i kasino add $(CURDIR)
 
 .PHONY: image
 image: .gokrazy-config
-	$(GOK) -i automaatti overwrite --full /tmp/automaatti.img --target_storage_bytes 1258299392 # 1.2 GiB
-	qemu-img convert -f raw -O qcow2 /tmp/automaatti.img automaatti.qcow2
-	rm -f /tmp/automaatti.img
-	@echo "built automaatti.qcow2"
+	$(GOK) -i kasino overwrite --full /tmp/kasino.img --target_storage_bytes 1258299392 # 1.2 GiB
+	qemu-img convert -f raw -O qcow2 /tmp/kasino.img kasino.qcow2
+	rm -f /tmp/kasino.img
+	@echo "built kasino.qcow2"
 
 .PHONY: run
 run: .gokrazy-config
-	$(GOK) -i automaatti vm run --graphic=false --netdev 'user,id=net0,hostfwd=udp::53-:53'
+	$(GOK) -i kasino vm run --graphic=false --netdev 'user,id=net0,hostfwd=udp::53-:53'
 
 .PHONY: integration-test
 integration-test: .check-config
@@ -97,4 +97,4 @@ keygen:
 
 .PHONY: clean
 clean:
-	rm -rf dns-pajatso bin/ gokrazy/ automaatti.qcow2
+	rm -rf dns-pajatso bin/ gokrazy/ kasino.qcow2
