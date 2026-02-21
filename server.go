@@ -95,6 +95,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 	// The server framework only unpacks header+question. Fully unpack the rest.
 	if err := r.Unpack(); err != nil {
 		m.Rcode = dns.RcodeFormatError
+		slog.Warn("update refused: format error")
 		writeMsg(w, m)
 		return
 	}
@@ -103,6 +104,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 	t := hasTSIG(r)
 	if t == nil {
 		m.Rcode = dns.RcodeRefused
+		slog.Warn("update refused: missing TSIG record")
 		writeMsg(w, m)
 		return
 	}
@@ -110,6 +112,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 	// Verify the TSIG key name matches.
 	if !dns.EqualName(t.Hdr.Name, s.TsigName) {
 		m.Rcode = dns.RcodeNotAuth
+		slog.Warn("update refused: wrong TSIG key name", "name", t.Hdr.Name, "expected", s.TsigName)
 		writeMsg(w, m)
 		return
 	}
@@ -117,13 +120,19 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 	// Verify the TSIG MAC.
 	if err := dns.TSIGVerify(r, s.tsigSigner, &dns.TSIGOption{}); err != nil {
 		m.Rcode = dns.RcodeNotAuth
+		slog.Warn("update refused: TSIG authentication failed")
 		writeMsg(w, m)
 		return
 	}
 
 	// Validate the zone section.
 	if len(r.Question) != 1 || !dns.EqualName(r.Question[0].Header().Name, s.Zone) {
+		name := "<nil>"
+		if len(r.Question) > 0 {
+			name = r.Question[0].Header().Name
+		}
 		m.Rcode = dns.RcodeRefused
+		slog.Warn("update refused: wrong zone", "zone", name, "expected", s.Zone, "questions", len(r.Question))
 		s.writeSigned(w, m, t.MAC)
 		return
 	}
@@ -146,13 +155,14 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 			// Add record.
 			if rrtype != dns.TypeTXT {
 				m.Rcode = dns.RcodeRefused
-				slog.Warn("update refused: wrong record type", "type", dns.TypeToString[rrtype])
+				slog.Warn("update refused: wrong record type", "type", dns.TypeToString[rrtype], "class", dns.ClassToString[hdr.Class])
 				s.writeSigned(w, m, t.MAC)
 				return
 			}
 			txt, ok := rr.(*dns.TXT)
 			if !ok || len(txt.Txt) == 0 {
 				m.Rcode = dns.RcodeFormatError
+				slog.Warn("update refused: unable to parse TXT record")
 				s.writeSigned(w, m, t.MAC)
 				return
 			}
@@ -163,6 +173,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 			// Delete specific RR.
 			if rrtype != dns.TypeTXT {
 				m.Rcode = dns.RcodeRefused
+				slog.Warn("update refused: wrong record type", "type", dns.TypeToString[rrtype], "class", dns.ClassToString[hdr.Class])
 				s.writeSigned(w, m, t.MAC)
 				return
 			}
@@ -176,12 +187,14 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg) {
 				slog.Info("update: deleted _acme-challenge TXT (class ANY)")
 			} else {
 				m.Rcode = dns.RcodeRefused
+				slog.Warn("update refused: wrong record type", "type", dns.TypeToString[rrtype], "class", dns.ClassToString[hdr.Class])
 				s.writeSigned(w, m, t.MAC)
 				return
 			}
 
 		default:
 			m.Rcode = dns.RcodeRefused
+			slog.Warn("update refused: unknown class", "class", dns.ClassToString[hdr.Class])
 			s.writeSigned(w, m, t.MAC)
 			return
 		}
