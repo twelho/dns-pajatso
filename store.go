@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -21,9 +22,16 @@ func (s *Store) Get() (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if !s.set || time.Now().After(s.expiry) {
+	if !s.set {
+		slog.Warn("get requested, but no TXT value set")
 		return "", false
 	}
+
+	if time.Now().After(s.expiry) {
+		slog.Warn("get requested, but TXT value expired")
+		return "", false
+	}
+
 	return s.value, true
 }
 

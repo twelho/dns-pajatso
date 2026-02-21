@@ -30,6 +30,7 @@ func main() {
 
 	var (
 		zone       string
+		subdomain  string
 		tsigName   string
 		tsigSecret string
 		listen     string
@@ -39,12 +40,14 @@ func main() {
 		Use:   "dns-pajatso",
 		Short: "Minimal DNS server for ACME DNS-01 challenges",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Normalize FQDNs.
+			// Normalize DNS names.
 			zone = ensureFQDN(zone)
+			subdomain = strings.TrimRight(subdomain, ".")
 			tsigName = ensureFQDN(tsigName)
 
 			srv := &Server{
 				Zone:       zone,
+				Subdomain:  subdomain,
 				TsigName:   tsigName,
 				TsigSecret: tsigSecret,
 				Store:      &Store{},
@@ -68,7 +71,7 @@ func main() {
 			go func() { errCh <- udpServer.ListenAndServe() }()
 			go func() { errCh <- tcpServer.ListenAndServe() }()
 
-			slog.Info("server started", "zone", zone, "listen", listen)
+			slog.Info("server started", "zone", zone, "record", srv.challengeName(), "listen", listen)
 
 			select {
 			case err := <-errCh:
@@ -83,6 +86,7 @@ func main() {
 	}
 
 	cmd.Flags().StringVar(&zone, "zone", "", "DNS zone (e.g. example.com.)")
+	cmd.Flags().StringVar(&subdomain, "subdomain", "", "Subdomain prefix for the challenge record (e.g. sub for _acme-challenge.sub.example.com.)")
 	cmd.Flags().StringVar(&tsigName, "tsig-name", "", "TSIG key name (e.g. acme-update.)")
 	cmd.Flags().StringVar(&tsigSecret, "tsig-secret", "", "Base64 HMAC-SHA512 secret")
 	cmd.Flags().StringVar(&listen, "listen", ":53", "Listen address")

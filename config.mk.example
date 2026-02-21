@@ -1,4 +1,8 @@
 zone = example.com.
+# Optional: subdomain prefix for the challenge record.
+# When set, the server handles _acme-challenge.<subdomain>.<zone> instead of _acme-challenge.<zone>.
+# Useful with cert-manager when issuing certificates for subdomains.
+# subdomain = subdomain
 tsig_name = acme-update.
 # TIP: Use `make keygen` to generate a new secret
 tsig_secret = <base64-encoded HMAC-SHA512 secret>

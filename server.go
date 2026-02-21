@@ -17,6 +17,7 @@ import (
 // and accepts RFC 2136 dynamic updates authenticated with TSIG.
 type Server struct {
 	Zone       string // FQDN of the zone, e.g. "example.com."
+	Subdomain  string // optional subdomain prefix, e.g. "sub" for "_acme-challenge.sub.example.com."
 	TsigName   string // TSIG key name, e.g. "acme-update."
 	TsigSecret string // Base64-encoded HMAC-SHA512 secret
 
@@ -27,6 +28,9 @@ type Server struct {
 
 // challengeName returns the FQDN for the _acme-challenge record.
 func (s *Server) challengeName() string {
+	if s.Subdomain != "" {
+		return "_acme-challenge." + s.Subdomain + "." + s.Zone
+	}
 	return "_acme-challenge." + s.Zone
 }
 

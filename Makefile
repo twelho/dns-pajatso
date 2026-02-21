@@ -1,5 +1,16 @@
 -include config.mk
 
+# Normalize config: ensure trailing dot on FQDNs, strip from subdomain label.
+ifneq ($(zone),)
+override zone := $(shell printf '%s' '$(zone)' | sed 's/\.*$$/./')
+endif
+ifneq ($(subdomain),)
+override subdomain := $(shell printf '%s' '$(subdomain)' | sed 's/\.*$$//')
+endif
+ifneq ($(tsig_name),)
+override tsig_name := $(shell printf '%s' '$(tsig_name)' | sed 's/\.*$$/./')
+endif
+
 TZ ?= $(shell realpath /etc/localtime | sed 's|.*/zoneinfo/||')
 
 .PHONY: shell
@@ -45,6 +56,7 @@ define GOKRAZY_CONFIG
     "github.com/twelho/dns-pajatso": {
       "CommandLineFlags": [
         "--zone=$(zone)",
+        "--subdomain=$(subdomain)",
         "--tsig-name=$(tsig_name)",
         "--tsig-secret=$(tsig_secret)"
       ]
@@ -85,18 +97,20 @@ image: .gokrazy-config
 run: .gokrazy-config
 	$(GOK) -i kasino vm run --graphic=false --netdev 'user,id=net0,hostfwd=udp::53-:53'
 
+challenge_name = _acme-challenge.$(if $(subdomain),$(subdomain).)$(zone)
+
 .PHONY: integration-test
 integration-test: .check-config
 	@echo "==> nsupdate: add TXT record"
-	printf 'server 127.0.0.1\nzone $(zone)\nupdate add _acme-challenge.$(zone) 60 TXT "test-token"\nsend\n' | \
+	printf 'server 127.0.0.1\nzone $(zone)\nupdate add $(challenge_name) 60 TXT "test-token"\nsend\n' | \
 		nsupdate -y 'hmac-sha512:$(tsig_name):$(tsig_secret)'
 	@echo "==> dig: verify TXT record"
-	dig @127.0.0.1 _acme-challenge.$(zone) TXT +short | tee /dev/stderr | grep -q '"test-token"'
+	dig @127.0.0.1 $(challenge_name) TXT +short | tee /dev/stderr | grep -q '"test-token"'
 	@echo "==> nsupdate: delete TXT record"
-	printf 'server 127.0.0.1\nzone $(zone)\nupdate delete _acme-challenge.$(zone) TXT\nsend\n' | \
+	printf 'server 127.0.0.1\nzone $(zone)\nupdate delete $(challenge_name) TXT\nsend\n' | \
 		nsupdate -y 'hmac-sha512:$(tsig_name):$(tsig_secret)'
 	@echo "==> dig: verify deletion"
-	@test -z "$$(dig @127.0.0.1 _acme-challenge.$(zone) TXT +short)"
+	@test -z "$$(dig @127.0.0.1 $(challenge_name) TXT +short)"
 	@echo "==> all integration tests passed"
 
 .PHONY: keygen

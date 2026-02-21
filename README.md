@@ -36,6 +36,12 @@ tsig_name = acme-update.
 tsig_secret = <base64-encoded HMAC-SHA512 key>
 ```
 
+If you're issuing certificates for a subdomain (e.g. `subdomain.example.com`) and your ACME client sends challenges to `_acme-challenge.subdomain.example.com` with the zone set to `example.com`, add the `subdomain` option:
+
+```makefile
+subdomain = subdomain
+```
+
 To generate a new TSIG secret:
 
 ```sh
@@ -88,11 +94,11 @@ The integration test uses `nsupdate` and `dig` to verify the full cycle: add a T
 
 ## Supported operations
 
-- **Query**: TXT lookups for `_acme-challenge.<zone>` (returns the current challenge token, if set)
-- **Update (add)**: RFC 2136 update to set the `_acme-challenge` TXT record (TSIG required)
-- **Update (delete)**: RFC 2136 update to remove the TXT record (TSIG required)
+- **Query**: TXT lookups for the challenge record (returns the current challenge token, if set)
+- **Update (add)**: RFC 2136 update to set the challenge TXT record (TSIG required)
+- **Update (delete)**: RFC 2136 update to remove the challenge TXT record (TSIG required)
 
-The record automatically expires after 10 minutes. Only `_acme-challenge` TXT records are accepted; all other update requests are refused.
+The challenge record name is `_acme-challenge.<zone>` by default, or `_acme-challenge.<subdomain>.<zone>` when a subdomain is configured. The record automatically expires after 10 minutes. Only the challenge TXT record is accepted; all other update requests are refused.
 
 ## Make targets
 

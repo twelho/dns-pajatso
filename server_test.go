@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	testZone      = "example.com."
-	testTsigName  = "acme-update."
-	testChallenge = "_acme-challenge.example.com."
+	testZone         = "example.com."
+	testTsigName     = "acme-update."
+	testChallenge    = "_acme-challenge.example.com."
+	testSubdomain    = "sub"
+	testSubChallenge = "_acme-challenge.sub.example.com."
 )
 
 // testTsigSecret is a deterministic test key (base64-encoded).
@@ -27,11 +29,18 @@ var testTsigSecret = base64.StdEncoding.EncodeToString(
 // startTestServer starts a DNS server on a random UDP port and returns
 // the address and a cleanup function.
 func startTestServer(t *testing.T) (string, *Store, func()) {
+	return startTestServerWithSubdomain(t, "")
+}
+
+// startTestServerWithSubdomain starts a DNS server with an optional subdomain
+// prefix on a random UDP port.
+func startTestServerWithSubdomain(t *testing.T, subdomain string) (string, *Store, func()) {
 	t.Helper()
 
 	store := &Store{}
 	srv := &Server{
 		Zone:       testZone,
+		Subdomain:  subdomain,
 		TsigName:   testTsigName,
 		TsigSecret: testTsigSecret,
 		Store:      store,
@@ -306,5 +315,50 @@ func TestFullUpdateQueryCycle(t *testing.T) {
 	}
 	if len(r.Answer) != 0 {
 		t.Fatalf("post-delete query: expected 0 answers, got %d", len(r.Answer))
+	}
+}
+
+// TestSubdomainUpdateAndQuery tests the full flow with a subdomain prefix.
+func TestSubdomainUpdateAndQuery(t *testing.T) {
+	addr, _, cleanup := startTestServerWithSubdomain(t, testSubdomain)
+	defer cleanup()
+
+	// Add a TXT record via update using the subdomain challenge name.
+	rr, _ := dns.New(testSubChallenge + " 60 IN TXT \"sub-token\"")
+	r := sendUpdate(t, addr, testZone, []dns.RR{rr}, testTsigName, testTsigSecret)
+	if r.Rcode != dns.RcodeSuccess {
+		t.Fatalf("add: expected NOERROR, got %s", dns.RcodeToString[r.Rcode])
+	}
+
+	// Query the subdomain challenge name.
+	r = query(t, addr, testSubChallenge, dns.TypeTXT)
+	if r.Rcode != dns.RcodeSuccess {
+		t.Fatalf("query: expected NOERROR, got %s", dns.RcodeToString[r.Rcode])
+	}
+	if len(r.Answer) != 1 {
+		t.Fatalf("query: expected 1 answer, got %d", len(r.Answer))
+	}
+	txt := r.Answer[0].(*dns.TXT)
+	if txt.Txt[0] != "sub-token" {
+		t.Fatalf("query: expected sub-token, got %s", txt.Txt[0])
+	}
+
+	// Query the bare challenge name — should be NODATA.
+	r = query(t, addr, testChallenge, dns.TypeTXT)
+	if len(r.Answer) != 0 {
+		t.Fatalf("bare query: expected 0 answers, got %d", len(r.Answer))
+	}
+}
+
+// TestSubdomainUpdateWrongName tests that updates to the bare challenge name
+// are refused when a subdomain is configured.
+func TestSubdomainUpdateWrongName(t *testing.T) {
+	addr, _, cleanup := startTestServerWithSubdomain(t, testSubdomain)
+	defer cleanup()
+
+	rr, _ := dns.New(testChallenge + " 60 IN TXT \"wrong\"")
+	r := sendUpdate(t, addr, testZone, []dns.RR{rr}, testTsigName, testTsigSecret)
+	if r.Rcode != dns.RcodeRefused {
+		t.Fatalf("expected REFUSED, got %s", dns.RcodeToString[r.Rcode])
 	}
 }
