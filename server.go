@@ -85,6 +85,8 @@ func (s *Server) handleQuery(w dns.ResponseWriter, r *dns.Msg) {
 				},
 			})
 			slog.Info("query: served _acme-challenge TXT")
+		} else {
+			slog.Warn("query: _acme-challenge TXT requested but no value set")
 		}
 	}
 

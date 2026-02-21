@@ -2,7 +2,6 @@ package main
 
 import (
 	"testing"
-	"time"
 )
 
 func TestStoreEmpty(t *testing.T) {
@@ -50,17 +49,3 @@ func TestStoreDeleteNoop(t *testing.T) {
 	s.Delete() // should not panic
 }
 
-func TestStoreExpiry(t *testing.T) {
-	var s Store
-	s.Set("expiring")
-
-	// Manually set expiry to the past.
-	s.mu.Lock()
-	s.expiry = time.Now().Add(-time.Second)
-	s.mu.Unlock()
-
-	val, ok := s.Get()
-	if ok {
-		t.Fatalf("expected expired, got %q", val)
-	}
-}

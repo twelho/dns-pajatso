@@ -4,7 +4,7 @@
 
 ## Details
 
-`dns-pajatso` is implemented as a simple standalone Go application. The supported RFC 2136 options are intentionally limited: `dns-pajatso` will only accept updates to the `_acme-challenge` TXT record through HMAC-SHA512 TSIG. The record will also automatically expire and be deleted after 10 minutes.
+`dns-pajatso` is implemented as a simple standalone Go application. The supported RFC 2136 options are intentionally limited: `dns-pajatso` will only accept updates to the `_acme-challenge` TXT record through HMAC-SHA512 TSIG.
 
 ## Prerequisites
 
@@ -98,7 +98,7 @@ The integration test uses `nsupdate` and `dig` to verify the full cycle: add a T
 - **Update (add)**: RFC 2136 update to set the challenge TXT record (TSIG required)
 - **Update (delete)**: RFC 2136 update to remove the challenge TXT record (TSIG required)
 
-The challenge record name is `_acme-challenge.<zone>` by default, or `_acme-challenge.<subdomain>.<zone>` when a subdomain is configured. The record automatically expires after 10 minutes. Only the challenge TXT record is accepted; all other update requests are refused.
+The challenge record name is `_acme-challenge.<zone>` by default, or `_acme-challenge.<subdomain>.<zone>` when a subdomain is configured. Only the challenge TXT record is accepted; all other update requests are refused.
 
 ## Make targets
 
